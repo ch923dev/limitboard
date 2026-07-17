@@ -78,3 +78,95 @@ pub async fn open_widget(
 
     Ok(())
 }
+
+const GHOST_LABEL: &str = "drag-ghost";
+
+/// Cursor anchor inside the ghost: horizontally centered, 40px below the top
+/// edge (matches where the widget lands on drop).
+fn ghost_origin(x: f64, y: f64, width: f64) -> (f64, f64) {
+    (x - width / 2.0, y - 40.0)
+}
+
+/// Footprint preview that follows the cursor during drag-to-widget. A DOM
+/// ghost can't leave the webview, so this is a real window: transparent,
+/// click-through, always-on-top, never focused. Hidden (not destroyed) on
+/// drag end and reused by the next drag.
+#[tauri::command]
+pub async fn show_drag_ghost(
+    app: AppHandle,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let w = width.max(120.0);
+    let h = height.max(80.0);
+    let (gx, gy) = ghost_origin(x, y, w);
+
+    if let Some(ghost) = app.get_webview_window(GHOST_LABEL) {
+        ghost
+            .set_size(tauri::LogicalSize::new(w, h))
+            .map_err(|e| e.to_string())?;
+        ghost
+            .set_position(tauri::LogicalPosition::new(gx, gy))
+            .map_err(|e| e.to_string())?;
+        ghost.show().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let page_url = app
+        .get_webview_window("main")
+        .and_then(|main| main.url().ok())
+        .map(|mut u| {
+            u.set_path("/");
+            u.set_query(None);
+            u.set_fragment(None);
+            u
+        });
+    let builder_url = page_url
+        .clone()
+        .map(WebviewUrl::External)
+        .unwrap_or_else(|| WebviewUrl::App("index.html".into()));
+
+    let ghost = WebviewWindowBuilder::new(&app, GHOST_LABEL, builder_url)
+        .title("Limitboard · drag preview")
+        .inner_size(w, h)
+        .position(gx, gy)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .resizable(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .focused(false)
+        .build()
+        .map_err(|e| e.to_string())?;
+    // Click-through: pointer events must keep streaming to the main window's
+    // captured card, and the drop must not land on the ghost itself.
+    ghost
+        .set_ignore_cursor_events(true)
+        .map_err(|e| e.to_string())?;
+    if let Some(u) = page_url {
+        ghost.navigate(u).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn move_drag_ghost(app: AppHandle, x: f64, y: f64, width: f64) -> Result<(), String> {
+    if let Some(ghost) = app.get_webview_window(GHOST_LABEL) {
+        let (gx, gy) = ghost_origin(x, y, width.max(120.0));
+        ghost
+            .set_position(tauri::LogicalPosition::new(gx, gy))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn hide_drag_ghost(app: AppHandle) -> Result<(), String> {
+    if let Some(ghost) = app.get_webview_window(GHOST_LABEL) {
+        ghost.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}

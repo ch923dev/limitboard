@@ -77,7 +77,10 @@ pub fn run() {
             secrets::get_env_var,
             files::read_credential_file,
             tray::set_tray_status,
-            widgets::open_widget
+            widgets::open_widget,
+            widgets::show_drag_ghost,
+            widgets::move_drag_ghost,
+            widgets::hide_drag_ghost
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

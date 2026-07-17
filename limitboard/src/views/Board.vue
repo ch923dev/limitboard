@@ -50,6 +50,9 @@ const drag = reactive({
   startX: 0,
   startY: 0,
   outside: false,
+  // Footprint the widget will open at — captured once per drag.
+  w: WIDGET_DEFAULT.w,
+  h: WIDGET_DEFAULT.h,
 });
 
 async function openWidget(id: ProviderId, screenX?: number, screenY?: number) {
@@ -63,11 +66,42 @@ async function openWidget(id: ProviderId, screenX?: number, screenY?: number) {
   });
 }
 
-// Footprint the dragged card will occupy as a widget — drives the ghost
-// preview and the drop offset (cursor sits at the ghost's title bar).
-const ghostSize = computed(() =>
-  drag.id ? loadWidgetSize(drag.id) : WIDGET_DEFAULT,
-);
+// ── native drag ghost ────────────────────────────────────────
+// A DOM ghost can't leave the webview, so the footprint preview is a real
+// transparent click-through window that follows the cursor everywhere.
+let ghostVisible = false;
+let ghostPending = false;
+let lastGhostMove = 0;
+
+async function showGhost(e: PointerEvent) {
+  if (ghostVisible || ghostPending) return;
+  ghostPending = true;
+  try {
+    await invoke("show_drag_ghost", {
+      x: e.screenX,
+      y: e.screenY,
+      width: drag.w,
+      height: drag.h,
+    });
+    ghostVisible = true;
+  } finally {
+    ghostPending = false;
+  }
+}
+
+function moveGhost(e: PointerEvent) {
+  if (!ghostVisible) return;
+  const t = performance.now();
+  if (t - lastGhostMove < 30) return; // ~33fps is plenty for a preview
+  lastGhostMove = t;
+  void invoke("move_drag_ghost", { x: e.screenX, y: e.screenY, width: drag.w });
+}
+
+function hideGhost() {
+  if (!ghostVisible && !ghostPending) return;
+  ghostVisible = false;
+  void invoke("hide_drag_ghost");
+}
 
 function onCardPointerDown(id: ProviderId, e: PointerEvent) {
   // Left button only; buttons inside the card keep their own clicks.
@@ -76,6 +110,9 @@ function onCardPointerDown(id: ProviderId, e: PointerEvent) {
   drag.startX = e.clientX;
   drag.startY = e.clientY;
   drag.active = false;
+  const size = loadWidgetSize(id);
+  drag.w = size.w;
+  drag.h = size.h;
   (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 }
 
@@ -93,24 +130,40 @@ function onCardPointerMove(e: PointerEvent) {
     e.clientY < 0 ||
     e.clientX > window.innerWidth ||
     e.clientY > window.innerHeight;
+  void showGhost(e);
+  moveGhost(e);
 }
 
 async function onCardPointerUp(e: PointerEvent) {
   const id = drag.id;
   const wasActive = drag.active;
   const outside = drag.outside;
+  const w = drag.w;
   drag.id = null;
   drag.active = false;
   drag.outside = false;
+  hideGhost();
   if (!id || !wasActive || !outside) return;
-  // screenX/Y are OS screen coords (CSS px) — good enough for placement.
-  const { w } = loadWidgetSize(id);
+  // screenX/Y are OS screen coords (CSS px) — the widget replaces the ghost
+  // exactly where it was hovering.
   await openWidget(id, e.screenX - Math.round(w / 2), e.screenY - 40);
+}
+
+function onCardPointerCancel() {
+  drag.id = null;
+  drag.active = false;
+  drag.outside = false;
+  hideGhost();
 }
 </script>
 
 <template>
-  <div v-if="cards.length" @pointermove="onCardPointerMove" @pointerup="onCardPointerUp">
+  <div
+    v-if="cards.length"
+    @pointermove="onCardPointerMove"
+    @pointerup="onCardPointerUp"
+    @pointercancel="onCardPointerCancel"
+  >
     <div v-if="allDegraded" class="banner">
       ALL PROVIDERS DEGRADED — showing last-good data · check network
     </div>
@@ -123,6 +176,7 @@ async function onCardPointerUp(e: PointerEvent) {
         @pointerdown="onCardPointerDown(c.id, $event)"
         @pointermove="onCardPointerMove"
         @pointerup="onCardPointerUp"
+        @pointercancel="onCardPointerCancel"
       >
         <ProviderCard
           :name="c.name"
@@ -141,20 +195,7 @@ async function onCardPointerUp(e: PointerEvent) {
     </div>
     <div v-if="drag.active" class="drag-hint" :class="{ armed: drag.outside }">
       {{ drag.outside ? "release to pop out ⧉" : "drag past the window edge to pop out" }}
-      · {{ ghostSize.w }} × {{ ghostSize.h }}
-    </div>
-    <div
-      v-if="drag.active"
-      class="ghost"
-      :class="{ armed: drag.outside }"
-      :style="{
-        left: `${drag.x - Math.round(ghostSize.w / 2)}px`,
-        top: `${drag.y - 40}px`,
-        width: `${ghostSize.w}px`,
-        height: `${ghostSize.h}px`,
-      }"
-    >
-      <span>{{ ghostSize.w }} × {{ ghostSize.h }}</span>
+      · {{ drag.w }} × {{ drag.h }}
     </div>
   </div>
   <div v-else class="empty">
@@ -213,28 +254,6 @@ async function onCardPointerUp(e: PointerEvent) {
 
 .drag-hint.armed {
   border-color: color-mix(in srgb, var(--lb-ok) 50%, transparent);
-  color: var(--lb-ok);
-}
-
-/* Footprint preview of the widget window that will open on release. */
-.ghost {
-  position: fixed;
-  border: 1px dashed var(--lb-muted);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--lb-panel) 60%, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--lb-mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  color: var(--lb-muted);
-  pointer-events: none;
-  z-index: 10;
-}
-
-.ghost.armed {
-  border-color: color-mix(in srgb, var(--lb-ok) 60%, transparent);
   color: var(--lb-ok);
 }
 
