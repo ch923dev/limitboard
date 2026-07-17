@@ -16,6 +16,8 @@ const props = defineProps<{
   syncAge: number;
   /** Set ⇒ degraded: data is stale, show the error badge. */
   error?: string;
+  /** Seconds until the next poll attempt (error cooldown); 0/absent = none. */
+  retryInSec?: number;
   /** Show the pop-out affordance (board only, not inside a widget window). */
   popoutable?: boolean;
 }>();
@@ -36,6 +38,21 @@ const syncText = computed(() => {
   if (s < 90) return `${s}s ago`;
   if (s < 5400) return `${Math.round(s / 60)}m ago`;
   return `${Math.round(s / 3600)}h ago`;
+});
+
+const retryText = computed(() => {
+  const s = props.retryInSec ?? 0;
+  if (s <= 0) return null;
+  return s < 90 ? `retry in ${s}s` : `retry in ${Math.ceil(s / 60)}m`;
+});
+
+// The snapshot's error text may carry a "retry in ~Xm" hint frozen at poll
+// time — replace it with the live cooldown countdown when we have one.
+const errorText = computed(() => {
+  if (!props.error) return null;
+  return retryText.value
+    ? props.error.replace(/ · retry in ~\d+[a-z]*$/, "")
+    : props.error;
 });
 </script>
 
@@ -66,12 +83,16 @@ const syncText = computed(() => {
     <WindowMeter v-for="(w, i) in windows" :key="i" :w="w" />
 
     <div v-if="!windows.length" class="nodata">
-      {{ error ? `awaiting data · ${error}` : "awaiting first poll…" }}
+      {{ errorText ? `awaiting data · ${errorText}` : "awaiting first poll…" }}
+      <div v-if="error && retryText" class="retry">{{ retryText }}</div>
     </div>
 
     <div class="foot">
       <span class="method">{{ method }}</span>
-      <span>{{ stat ? `${stat} · ` : "" }}sync {{ syncText }}</span>
+      <span>
+        {{ stat ? `${stat} · ` : "" }}sync {{ syncText
+        }}{{ windows.length && retryText ? ` · ${retryText}` : "" }}
+      </span>
     </div>
   </div>
 </template>
@@ -161,6 +182,13 @@ const syncText = computed(() => {
   font-size: 11px;
   color: var(--lb-muted);
   text-align: center;
+}
+
+.retry {
+  margin-top: 8px;
+  font-size: 10px;
+  color: var(--lb-warn);
+  letter-spacing: 0.08em;
 }
 
 .foot {

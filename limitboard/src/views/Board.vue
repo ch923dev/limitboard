@@ -28,6 +28,7 @@ const cards = computed(() =>
       syncAge: snap
         ? Math.max(0, Math.floor((now.value - snap.fetchedAt) / 1000))
         : 0,
+      retryInSec: usage.retryInSec(p.id, now.value),
     };
   }),
 );
@@ -121,6 +122,7 @@ async function onCardPointerUp(e: PointerEvent) {
           :stat="c.stat"
           :error="c.error"
           :sync-age="c.syncAge"
+          :retry-in-sec="c.retryInSec"
           popoutable
           @popout="openWidget(c.id)"
         />

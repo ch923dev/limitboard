@@ -142,6 +142,10 @@ export const useUsageStore = defineStore("usage", {
       const s = state.snapshots[id];
       return s ? Math.max(0, Math.floor((Date.now() - s.fetchedAt) / 1000)) : null;
     },
+    /** Seconds until the next allowed poll (error cooldown); 0 = not gated.
+     *  Takes the caller's ticking clock so countdowns re-render live. */
+    retryInSec: (state) => (id: ProviderId, nowMs: number) =>
+      Math.max(0, Math.ceil(((state._nextAllowedAt[id] ?? 0) - nowMs) / 1000)),
   },
 
   actions: {

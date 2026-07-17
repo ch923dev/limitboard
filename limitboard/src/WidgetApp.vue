@@ -82,6 +82,7 @@ const syncAge = computed(() =>
       :stat="snap?.stat"
       :error="snap?.error"
       :sync-age="syncAge"
+      :retry-in-sec="usage.retryInSec(providerId, now)"
     />
     <div v-else class="unknown">unknown provider: {{ providerId }}</div>
   </div>
