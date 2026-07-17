@@ -21,6 +21,8 @@ pub async fn open_widget(
     provider_id: String,
     x: f64,
     y: f64,
+    width: Option<f64>,
+    height: Option<f64>,
 ) -> Result<(), String> {
     if !ALLOWED.contains(&provider_id.as_str()) {
         return Err(format!("unknown provider: {provider_id}"));
@@ -53,10 +55,16 @@ pub async fn open_widget(
 
     let widget = WebviewWindowBuilder::new(&app, &label, builder_url)
     .title(format!("Limitboard · {provider_id}"))
-    .inner_size(400.0, 340.0)
+    // Caller passes the provider's remembered size; clamp to the same minimum
+    // as min_inner_size so a corrupt saved value can't spawn a sliver.
+    .inner_size(
+        width.unwrap_or(400.0).max(320.0),
+        height.unwrap_or(340.0).max(200.0),
+    )
     .min_inner_size(320.0, 200.0)
     .position(x.max(0.0), y.max(0.0))
     .decorations(false)
+    .resizable(true)
     .always_on_top(true)
     .skip_taskbar(true)
     .build()

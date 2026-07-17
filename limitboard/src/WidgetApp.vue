@@ -3,11 +3,13 @@
 // pin-to-foreground toggle (Task Manager style always-on-top).
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { buildAdapters } from "./adapters";
 import type { ProviderId } from "./adapters/types";
 import { PROVIDER_META } from "./stores/providers";
 import { useSettingsStore } from "./stores/settings";
 import { useUsageStore } from "./stores/usage";
+import { saveWidgetSize } from "./stores/widgetSize";
 import ProviderCard from "./components/ProviderCard.vue";
 
 const props = defineProps<{ providerId: ProviderId }>();
@@ -22,9 +24,20 @@ const pinned = ref(true); // widgets open pinned
 
 const now = ref(Date.now());
 let timer: ReturnType<typeof setInterval> | undefined;
+let unlistenResize: UnlistenFn | undefined;
+let sizeSaveTimer: ReturnType<typeof setTimeout> | undefined;
 
 onMounted(async () => {
   timer = setInterval(() => (now.value = Date.now()), 1000);
+  // Remember the size the user drags this widget to (debounced — resize
+  // events stream continuously while the edge is held).
+  unlistenResize = await win.onResized(({ payload }) => {
+    clearTimeout(sizeSaveTimer);
+    sizeSaveTimer = setTimeout(async () => {
+      const logical = payload.toLogical(await win.scaleFactor());
+      saveWidgetSize(props.providerId, { w: logical.width, h: logical.height });
+    }, 300);
+  });
   await settings.load();
   const adapter = adapters.get(props.providerId);
   if (adapter) {
@@ -34,8 +47,14 @@ onMounted(async () => {
 
 onUnmounted(() => {
   clearInterval(timer);
+  clearTimeout(sizeSaveTimer);
+  unlistenResize?.();
   usage.stopPolling();
 });
+
+// Undecorated windows keep their invisible resize borders, but the grip
+// makes it discoverable — dragging it resizes from the bottom-right corner.
+const startResize = () => void win.startResizeDragging("SouthEast");
 
 async function togglePin() {
   pinned.value = !pinned.value;
@@ -85,6 +104,8 @@ const syncAge = computed(() =>
       :retry-in-sec="usage.retryInSec(providerId, now)"
     />
     <div v-else class="unknown">unknown provider: {{ providerId }}</div>
+
+    <div class="grip" title="Resize" @pointerdown.prevent="startResize" />
   </div>
 </template>
 
@@ -99,6 +120,26 @@ const syncAge = computed(() =>
   border: 1px solid var(--lb-panel-edge);
   border-radius: 8px;
   overflow: hidden;
+  position: relative;
+}
+
+.grip {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  /* two diagonal ticks, Task Manager style */
+  background:
+    linear-gradient(135deg, transparent 6px, var(--lb-faint) 6px, var(--lb-faint) 7px, transparent 7px),
+    linear-gradient(135deg, transparent 10px, var(--lb-faint) 10px, var(--lb-faint) 11px, transparent 11px);
+}
+
+.grip:hover {
+  background:
+    linear-gradient(135deg, transparent 6px, var(--lb-muted) 6px, var(--lb-muted) 7px, transparent 7px),
+    linear-gradient(135deg, transparent 10px, var(--lb-muted) 10px, var(--lb-muted) 11px, transparent 11px);
 }
 
 .chrome {

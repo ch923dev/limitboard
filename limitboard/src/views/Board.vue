@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ProviderId } from "../adapters/types";
 import { useProvidersStore } from "../stores/providers";
 import { useUsageStore } from "../stores/usage";
+import { loadWidgetSize, WIDGET_DEFAULT } from "../stores/widgetSize";
 import ProviderCard from "../components/ProviderCard.vue";
 
 const providers = useProvidersStore();
@@ -52,12 +53,21 @@ const drag = reactive({
 });
 
 async function openWidget(id: ProviderId, screenX?: number, screenY?: number) {
+  const size = loadWidgetSize(id); // widget reopens at its remembered size
   await invoke("open_widget", {
     providerId: id,
     x: screenX ?? 120,
     y: screenY ?? 120,
+    width: size.w,
+    height: size.h,
   });
 }
+
+// Footprint the dragged card will occupy as a widget — drives the ghost
+// preview and the drop offset (cursor sits at the ghost's title bar).
+const ghostSize = computed(() =>
+  drag.id ? loadWidgetSize(drag.id) : WIDGET_DEFAULT,
+);
 
 function onCardPointerDown(id: ProviderId, e: PointerEvent) {
   // Left button only; buttons inside the card keep their own clicks.
@@ -94,7 +104,8 @@ async function onCardPointerUp(e: PointerEvent) {
   drag.outside = false;
   if (!id || !wasActive || !outside) return;
   // screenX/Y are OS screen coords (CSS px) — good enough for placement.
-  await openWidget(id, e.screenX - 200, e.screenY - 40);
+  const { w } = loadWidgetSize(id);
+  await openWidget(id, e.screenX - Math.round(w / 2), e.screenY - 40);
 }
 </script>
 
@@ -130,6 +141,20 @@ async function onCardPointerUp(e: PointerEvent) {
     </div>
     <div v-if="drag.active" class="drag-hint" :class="{ armed: drag.outside }">
       {{ drag.outside ? "release to pop out ⧉" : "drag past the window edge to pop out" }}
+      · {{ ghostSize.w }} × {{ ghostSize.h }}
+    </div>
+    <div
+      v-if="drag.active"
+      class="ghost"
+      :class="{ armed: drag.outside }"
+      :style="{
+        left: `${drag.x - Math.round(ghostSize.w / 2)}px`,
+        top: `${drag.y - 40}px`,
+        width: `${ghostSize.w}px`,
+        height: `${ghostSize.h}px`,
+      }"
+    >
+      <span>{{ ghostSize.w }} × {{ ghostSize.h }}</span>
     </div>
   </div>
   <div v-else class="empty">
@@ -188,6 +213,28 @@ async function onCardPointerUp(e: PointerEvent) {
 
 .drag-hint.armed {
   border-color: color-mix(in srgb, var(--lb-ok) 50%, transparent);
+  color: var(--lb-ok);
+}
+
+/* Footprint preview of the widget window that will open on release. */
+.ghost {
+  position: fixed;
+  border: 1px dashed var(--lb-muted);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--lb-panel) 60%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--lb-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--lb-muted);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.ghost.armed {
+  border-color: color-mix(in srgb, var(--lb-ok) 60%, transparent);
   color: var(--lb-ok);
 }
 
