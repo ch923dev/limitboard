@@ -1,0 +1,9 @@
+# Local tool state — not part of the project
+.canvas/
+.claude/
+.impeccable/
+.codegraph/
+
+# Local MCP configs — carry per-machine auth tokens
+.mcp.json
+opencode.json
