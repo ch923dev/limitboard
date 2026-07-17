@@ -2,6 +2,7 @@ mod files;
 mod probes;
 mod secrets;
 mod tray;
+mod usage;
 mod widgets;
 
 use tauri::{
@@ -76,6 +77,7 @@ pub fn run() {
             secrets::delete_secret,
             secrets::get_env_var,
             files::read_credential_file,
+            usage::fetch_claude_usage,
             tray::set_tray_status,
             widgets::open_widget,
             widgets::show_drag_ghost,

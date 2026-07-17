@@ -1,23 +1,17 @@
 // Native Claude Code adapter — community-discovered OAuth usage endpoint.
-// Reads the token Claude Code maintains in ~/.claude/.credentials.json
-// (read-only; Claude Code owns refresh). Endpoint schema may drift — parse
+// The fetch itself runs in Rust (fetch_claude_usage): api.anthropic.com
+// rejects browser/CORS clients for some orgs, and tauri-plugin-http always
+// forwards the webview Origin. Rust reads the token Claude Code maintains in
+// ~/.claude/.credentials.json (read-only; Claude Code owns refresh) and the
+// token never enters the webview. Endpoint schema may drift — parse
 // defensively and degrade to an error snapshot rather than throw.
 import { invoke } from "@tauri-apps/api/core";
-import { HttpError, httpError } from "./http";
 import type {
   DetectResult,
   ProviderAdapter,
   UsageSnapshot,
   UsageWindow,
 } from "./types";
-
-interface ClaudeCredentials {
-  claudeAiOauth?: {
-    accessToken?: string;
-    expiresAt?: number;
-    subscriptionType?: string;
-  };
-}
 
 /** One rate-limit window as returned by /api/oauth/usage (shape may drift). */
 interface OauthUsageWindow {
@@ -32,12 +26,17 @@ interface OauthUsageResponse {
   seven_day_oauth_apps?: OauthUsageWindow;
 }
 
-export interface ClaudeDeps {
-  fetchFn?: typeof fetch;
-  readCredentials?: () => Promise<string | null>;
+/** What fetch_claude_usage returns: raw status + body, auth handled in Rust. */
+export interface RawUsageResponse {
+  status: number;
+  body: string;
+  retryAfterSecs?: number | null;
 }
 
-const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+export interface ClaudeDeps {
+  fetchUsageRaw?: () => Promise<RawUsageResponse>;
+  readCredentials?: () => Promise<string | null>;
+}
 
 export function mapOauthUsage(res: OauthUsageResponse): UsageWindow[] {
   const windows: UsageWindow[] = [];
@@ -57,7 +56,9 @@ export function mapOauthUsage(res: OauthUsageResponse): UsageWindow[] {
 }
 
 export function createClaudeAdapter(deps: ClaudeDeps = {}): ProviderAdapter {
-  const fetchFn = deps.fetchFn ?? fetch;
+  const fetchUsageRaw =
+    deps.fetchUsageRaw ??
+    (() => invoke<RawUsageResponse>("fetch_claude_usage"));
   const readCredentials =
     deps.readCredentials ??
     (() =>
@@ -65,24 +66,13 @@ export function createClaudeAdapter(deps: ClaudeDeps = {}): ProviderAdapter {
         id: "claude-credentials",
       }));
 
-  const getToken = async (): Promise<string | null> => {
-    const raw = await readCredentials();
-    if (!raw) return null;
-    try {
-      const creds = JSON.parse(raw) as ClaudeCredentials;
-      return creds.claudeAiOauth?.accessToken ?? null;
-    } catch {
-      return null;
-    }
-  };
-
   return {
     id: "claude-code",
     displayName: "Claude Code",
 
     async detect(): Promise<DetectResult> {
-      const token = await getToken();
-      return token
+      const raw = await readCredentials();
+      return raw
         ? { detected: true, evidence: "%USERPROFILE%\\.claude\\.credentials.json" }
         : { detected: false, evidence: "not found · ~/.claude/.credentials.json" };
     },
@@ -90,21 +80,25 @@ export function createClaudeAdapter(deps: ClaudeDeps = {}): ProviderAdapter {
     async fetchUsage(): Promise<UsageSnapshot> {
       const fetchedAt = Date.now();
       try {
-        const token = await getToken();
-        if (!token) throw new Error("no credentials");
+        const raw = await fetchUsageRaw();
 
-        const res = await fetchFn(USAGE_URL, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "anthropic-beta": "oauth-2025-04-20",
-            // plugin-http forwards the webview's Origin, so the API treats us
-            // as a CORS/browser client and 401s without this opt-in header.
-            "anthropic-dangerous-direct-browser-access": "true",
-          },
-        });
-        if (!res.ok) throw httpError("oauth/usage", res);
-        const body = (await res.json()) as OauthUsageResponse;
+        if (raw.status < 200 || raw.status >= 300) {
+          const retryAfterMs =
+            raw.retryAfterSecs != null ? raw.retryAfterSecs * 1000 : undefined;
+          const hint =
+            retryAfterMs != null
+              ? ` · retry in ~${Math.ceil(retryAfterMs / 60_000)}m`
+              : "";
+          return {
+            providerId: "claude-code",
+            windows: [],
+            fetchedAt,
+            error: `oauth/usage → HTTP ${raw.status}${hint}`,
+            retryAfterMs,
+          };
+        }
 
+        const body = JSON.parse(raw.body) as OauthUsageResponse;
         const windows = mapOauthUsage(body);
         if (!windows.length) throw new Error("no usage windows in response (schema drift?)");
 
@@ -115,7 +109,6 @@ export function createClaudeAdapter(deps: ClaudeDeps = {}): ProviderAdapter {
           windows: [],
           fetchedAt,
           error: e instanceof Error ? e.message : String(e),
-          retryAfterMs: e instanceof HttpError ? e.retryAfterMs : undefined,
         };
       }
     },

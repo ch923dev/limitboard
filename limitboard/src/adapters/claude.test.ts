@@ -38,12 +38,9 @@ describe("mapOauthUsage", () => {
 });
 
 describe("createClaudeAdapter", () => {
-  const fetchOk = (async () =>
-    new Response(JSON.stringify(USAGE), { status: 200 })) as typeof fetch;
-
   it("happy path → three windows", async () => {
     const a = createClaudeAdapter({
-      fetchFn: fetchOk,
+      fetchUsageRaw: async () => ({ status: 200, body: JSON.stringify(USAGE) }),
       readCredentials: async () => CREDS,
     });
     const snap = await a.fetchUsage();
@@ -53,7 +50,10 @@ describe("createClaudeAdapter", () => {
 
   it("missing credentials file → not detected + error snapshot", async () => {
     const a = createClaudeAdapter({
-      fetchFn: fetchOk,
+      // fetch_claude_usage rejects when the credentials file is absent
+      fetchUsageRaw: async () => {
+        throw new Error("no credentials");
+      },
       readCredentials: async () => null,
     });
     expect((await a.detect()).detected).toBe(false);
@@ -62,37 +62,32 @@ describe("createClaudeAdapter", () => {
 
   it("HTTP 401 → error snapshot, no throw", async () => {
     const a = createClaudeAdapter({
-      fetchFn: (async () => new Response("x", { status: 401 })) as typeof fetch,
+      fetchUsageRaw: async () => ({ status: 401, body: "x" }),
       readCredentials: async () => CREDS,
     });
     expect((await a.fetchUsage()).error).toMatch(/HTTP 401/);
   });
 
-  it("sends the direct-browser-access header (plugin fetch carries an Origin)", async () => {
-    let seen: Record<string, string> | undefined;
-    const a = createClaudeAdapter({
-      fetchFn: (async (_u: RequestInfo | URL, init?: RequestInit) => {
-        seen = init?.headers as Record<string, string>;
-        return new Response(JSON.stringify(USAGE), { status: 200 });
-      }) as typeof fetch,
-      readCredentials: async () => CREDS,
-    });
-    await a.fetchUsage();
-    expect(seen?.["anthropic-dangerous-direct-browser-access"]).toBe("true");
-  });
-
   it("HTTP 429 with Retry-After → retryAfterMs surfaced (server sends ~47min)", async () => {
     const a = createClaudeAdapter({
-      fetchFn: (async () =>
-        new Response("rate limited", {
-          status: 429,
-          headers: { "retry-after": "2833" },
-        })) as typeof fetch,
+      fetchUsageRaw: async () => ({
+        status: 429,
+        body: "rate limited",
+        retryAfterSecs: 2833,
+      }),
       readCredentials: async () => CREDS,
     });
     const snap = await a.fetchUsage();
     expect(snap.error).toMatch(/HTTP 429/);
     expect(snap.error).toMatch(/retry in ~48m/);
     expect(snap.retryAfterMs).toBe(2_833_000);
+  });
+
+  it("unparseable body → error snapshot (schema drift guard)", async () => {
+    const a = createClaudeAdapter({
+      fetchUsageRaw: async () => ({ status: 200, body: "<html>" }),
+      readCredentials: async () => CREDS,
+    });
+    expect((await a.fetchUsage()).error).toBeTruthy();
   });
 });

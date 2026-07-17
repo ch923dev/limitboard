@@ -18,7 +18,8 @@ export function buildAdapters(
   const fetchFn = tauriFetch as typeof fetch;
   const adapters: ProviderAdapter[] = [
     createOpenRouterAdapter({ getKey: openRouterKey, getSoftCapUsd, fetchFn }),
-    createClaudeAdapter({ fetchFn }),
+    // claude fetches in Rust (fetch_claude_usage) — org blocks browser CORS.
+    createClaudeAdapter(),
     createCodexAdapter({ fetchFn }),
   ];
   return new Map(adapters.map((a) => [a.id, a]));
