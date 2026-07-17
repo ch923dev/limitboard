@@ -97,6 +97,9 @@ export function createClaudeAdapter(deps: ClaudeDeps = {}): ProviderAdapter {
           headers: {
             Authorization: `Bearer ${token}`,
             "anthropic-beta": "oauth-2025-04-20",
+            // plugin-http forwards the webview's Origin, so the API treats us
+            // as a CORS/browser client and 401s without this opt-in header.
+            "anthropic-dangerous-direct-browser-access": "true",
           },
         });
         if (!res.ok) throw httpError("oauth/usage", res);

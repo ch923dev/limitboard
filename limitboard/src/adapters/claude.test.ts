@@ -68,6 +68,19 @@ describe("createClaudeAdapter", () => {
     expect((await a.fetchUsage()).error).toMatch(/HTTP 401/);
   });
 
+  it("sends the direct-browser-access header (plugin fetch carries an Origin)", async () => {
+    let seen: Record<string, string> | undefined;
+    const a = createClaudeAdapter({
+      fetchFn: (async (_u: RequestInfo | URL, init?: RequestInit) => {
+        seen = init?.headers as Record<string, string>;
+        return new Response(JSON.stringify(USAGE), { status: 200 });
+      }) as typeof fetch,
+      readCredentials: async () => CREDS,
+    });
+    await a.fetchUsage();
+    expect(seen?.["anthropic-dangerous-direct-browser-access"]).toBe("true");
+  });
+
   it("HTTP 429 with Retry-After → retryAfterMs surfaced (server sends ~47min)", async () => {
     const a = createClaudeAdapter({
       fetchFn: (async () =>
