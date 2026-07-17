@@ -8,6 +8,8 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    permissions:
+      contents: write # tauri-action creates the draft release + uploads the MSI
     defaults:
       run:
         working-directory: limitboard
