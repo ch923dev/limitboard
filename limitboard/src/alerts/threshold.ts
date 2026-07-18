@@ -21,7 +21,7 @@ const HYSTERESIS = 5;
 export class ThresholdEngine {
   private states = new Map<string, WindowState>();
 
-  constructor(private getNotifyPct: () => number) {}
+  constructor(private getNotifyPct: (providerId: string) => number) {}
 
   private key(providerId: string, w: UsageWindow): string {
     return `${providerId}|${w.label}|${w.sub ?? ""}`;
@@ -36,7 +36,7 @@ export class ThresholdEngine {
     providerName: string,
     windows: UsageWindow[],
   ): AlertEvent[] {
-    const notifyPct = this.getNotifyPct();
+    const notifyPct = this.getNotifyPct(providerId);
     const events: AlertEvent[] = [];
 
     for (const w of windows) {

@@ -15,7 +15,10 @@ export class AlertController {
   private lastTrayLevel: string | null = null;
   private lastTrayTooltip = "";
 
-  constructor(getNotifyPct: () => number) {
+  constructor(
+    getNotifyPct: (providerId: string) => number,
+    private isMuted: () => boolean = () => false,
+  ) {
     this.engine = new ThresholdEngine(getNotifyPct);
   }
 
@@ -25,9 +28,13 @@ export class AlertController {
     let worstPct = 0;
     let worstSummary = "all nominal";
 
+    // Engine always runs so arming state stays consistent; mute only
+    // swallows the toasts (crossings during mute are consumed, not queued).
+    const muted = this.isMuted();
+
     for (const { snap, providerName } of snapshots) {
       const events = this.engine.evaluate(snap.providerId, providerName, snap.windows);
-      for (const e of events) await this.toast(formatAlert(e));
+      if (!muted) for (const e of events) await this.toast(formatAlert(e));
 
       for (const w of snap.windows) {
         const pct = windowPct(w);

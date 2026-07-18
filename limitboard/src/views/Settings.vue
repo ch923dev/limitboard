@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { useProvidersStore } from "../stores/providers";
@@ -13,10 +13,17 @@ const settings = useSettingsStore();
 const orKey = ref("");
 const orKeySaved = ref(false);
 
+// Ticks so a timed mute's countdown label stays live and expiry flips the UI.
+const now = ref(Date.now());
+let nowTimer: ReturnType<typeof setInterval> | undefined;
+
 onMounted(async () => {
+  nowTimer = setInterval(() => (now.value = Date.now()), 1000);
   const stored = await invoke<string | null>("get_secret", { name: "openrouter" });
   orKeySaved.value = !!stored;
 });
+
+onUnmounted(() => clearInterval(nowTimer));
 
 async function onToggle(id: ProviderId) {
   const p = providers.byId(id);
@@ -56,6 +63,39 @@ async function onThresholdChange(e: Event) {
     await settings.save();
   }
 }
+
+async function onProviderPctChange(id: ProviderId, e: Event) {
+  const input = e.target as HTMLInputElement;
+  const raw = input.value.trim();
+  if (!raw) {
+    await settings.setProviderNotifyPct(id, undefined); // blank ⇒ inherit global
+    return;
+  }
+  const v = Number(raw);
+  if (v >= 1 && v <= 100) await settings.setProviderNotifyPct(id, v);
+  else input.value = String(settings.notifyPctByProvider?.[id] ?? "");
+}
+
+const HOUR = 3_600_000;
+const MUTE_PRESETS = [
+  { label: "1H", ms: HOUR },
+  { label: "8H", ms: 8 * HOUR },
+  { label: "24H", ms: 24 * HOUR },
+];
+
+const muted = computed(() => settings.isMuted(now.value));
+
+const muteLabel = computed(() => {
+  if (settings.muteUntil === "forever") return "muted until you unmute";
+  if (typeof settings.muteUntil === "number" && settings.muteUntil > now.value) {
+    const t = new Date(settings.muteUntil).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    return `muted until ${t}`;
+  }
+  return "notifications active";
+});
 
 async function onSoftCapChange(e: Event) {
   const raw = (e.target as HTMLInputElement).value;
@@ -110,7 +150,23 @@ const openrouter = computed(() => providers.byId("openrouter"));
           <div class="row-evidence">{{ p.evidence }}</div>
         </div>
       </div>
-      <Toggle :on="p.enabled" :disabled="!p.detected" @toggle="onToggle(p.id)" />
+      <div class="row-controls">
+        <label v-if="p.detected" class="pct-override">
+          NOTIFY
+          <input
+            type="number"
+            class="field pct-field"
+            min="1"
+            max="100"
+            step="5"
+            :value="settings.notifyPctByProvider?.[p.id] ?? ''"
+            :placeholder="String(settings.notifyPct)"
+            @change="onProviderPctChange(p.id, $event)"
+          />
+          %
+        </label>
+        <Toggle :on="p.enabled" :disabled="!p.detected" @toggle="onToggle(p.id)" />
+      </div>
     </div>
 
     <!-- OpenRouter key management: sole manual-credential exception (spec FR-1). -->
@@ -148,6 +204,33 @@ const openrouter = computed(() => providers.byId("openrouter"));
       </div>
     </div>
 
+    <div class="mute-panel">
+      <div class="kicker">NOTIFICATIONS</div>
+      <div class="mute-row">
+        <span class="mute-status" :class="{ 'is-muted': muted }">
+          {{ muteLabel }}
+        </span>
+        <div class="mute-actions">
+          <template v-if="muted">
+            <button class="btn" @click="settings.unmute()">UNMUTE</button>
+          </template>
+          <template v-else>
+            <button
+              v-for="preset in MUTE_PRESETS"
+              :key="preset.label"
+              class="btn"
+              @click="settings.muteFor(preset.ms)"
+            >
+              MUTE {{ preset.label }}
+            </button>
+            <button class="btn" @click="settings.muteForever()">
+              MUTE FOREVER
+            </button>
+          </template>
+        </div>
+      </div>
+    </div>
+
     <div class="globals">
       <label class="global">
         POLL INTERVAL
@@ -172,7 +255,7 @@ const openrouter = computed(() => providers.byId("openrouter"));
           :value="settings.notifyPct"
           @change="onThresholdChange"
         />
-        %
+        % <span class="global-hint">default — per-agent NOTIFY overrides</span>
       </label>
       <label class="global autostart">
         LAUNCH AT STARTUP
@@ -336,6 +419,70 @@ const openrouter = computed(() => providers.byId("openrouter"));
   font-family: var(--lb-mono);
   font-size: 10px;
   color: var(--lb-faint);
+}
+
+.row-controls {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.pct-override {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--lb-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--lb-muted);
+}
+
+.pct-field {
+  width: 58px;
+}
+
+.pct-field::placeholder {
+  color: var(--lb-faint);
+}
+
+.mute-panel {
+  background: var(--lb-panel);
+  border: 1px solid var(--lb-panel-edge);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 18px 0;
+}
+
+.mute-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.mute-status {
+  font-family: var(--lb-mono);
+  font-size: 11px;
+  color: var(--lb-ok);
+}
+
+.mute-status.is-muted {
+  color: var(--lb-crit);
+}
+
+.mute-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.global-hint {
+  font-family: var(--lb-mono);
+  font-size: 9px;
+  color: var(--lb-faint);
+  letter-spacing: 0.06em;
 }
 
 .globals {

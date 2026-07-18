@@ -6,7 +6,7 @@ import Board from "./views/Board.vue";
 import Settings from "./views/Settings.vue";
 import Demo from "./views/Demo.vue";
 import { buildAdapters } from "./adapters";
-import { windowPct } from "./adapters/types";
+import { windowPct, type ProviderId } from "./adapters/types";
 import { AlertController } from "./alerts/controller";
 import { statusColor } from "./theme";
 import { useProvidersStore } from "./stores/providers";
@@ -24,7 +24,10 @@ const settings = useSettingsStore();
 const usage = useUsageStore();
 
 const adapters = buildAdapters(async () => settings.openrouterSoftCapUsd);
-const alertController = new AlertController(() => settings.notifyPct);
+const alertController = new AlertController(
+  (id) => settings.notifyPctFor(id as ProviderId),
+  () => settings.isMuted(),
+);
 
 const enabledAdapters = () =>
   providers.enabledProviders

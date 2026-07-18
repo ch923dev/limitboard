@@ -53,6 +53,14 @@ describe("ThresholdEngine", () => {
     expect(e.evaluate("openrouter", "OpenRouter", [spend])).toHaveLength(0);
   });
 
+  it("per-provider thresholds apply independently", () => {
+    const pcts: Record<string, number> = { "claude-code": 50, codex: 90 };
+    const e = new ThresholdEngine((id) => pcts[id] ?? 80);
+    expect(e.evaluate("claude-code", "Claude Code", [w(60)])).toHaveLength(1); // over its 50
+    expect(e.evaluate("codex", "Codex CLI", [w(60)])).toHaveLength(0); // under its 90
+    expect(e.evaluate("codex", "Codex CLI", [w(92)])).toHaveLength(1);
+  });
+
   it("windows are tracked independently", () => {
     const e = engine();
     const fired = e.evaluate("p", "P", [w(85), w(30, { label: "Weekly" })]);
