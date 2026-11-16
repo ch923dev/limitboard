@@ -64,6 +64,22 @@ async function onThresholdChange(e: Event) {
   }
 }
 
+async function onSwitchPctChange(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const v = Number(input.value);
+  if (v >= 1 && v <= 100) {
+    settings.switchPct = v;
+    await settings.save();
+  } else {
+    input.value = String(settings.switchPct);
+  }
+}
+
+async function toggleSetting(key: "autoSwitchClaude" | "notifyClaudeReset") {
+  settings[key] = !settings[key];
+  await settings.save();
+}
+
 async function onProviderPctChange(id: ProviderId, e: Event) {
   const input = e.target as HTMLInputElement;
   const raw = input.value.trim();
@@ -228,6 +244,42 @@ const openrouter = computed(() => providers.byId("openrouter"));
             </button>
           </template>
         </div>
+      </div>
+    </div>
+
+    <!-- Claude account switching (Accounts view). Applies with 2+ Claude Code accounts. -->
+    <div class="mute-panel">
+      <div class="kicker">CLAUDE ACCOUNT SWITCHING</div>
+      <div class="hint switch-hint">
+        At NOTIFY the Claude toast names the account with the most room left. At SWITCH
+        AT you get a "time to switch" toast. Needs two or more signed-in Claude Code accounts.
+      </div>
+      <div class="switch-rows">
+        <label class="global">
+          SWITCH AT
+          <input
+            type="number"
+            class="field num"
+            min="1"
+            max="100"
+            step="1"
+            :value="settings.switchPct"
+            @change="onSwitchPctChange"
+          />
+          %
+        </label>
+        <label class="global">
+          AUTO-SWITCH CLAUDE CODE
+          <Toggle :on="settings.autoSwitchClaude" @toggle="toggleSetting('autoSwitchClaude')" />
+        </label>
+        <label class="global">
+          TOAST WHEN AN ACCOUNT RESETS
+          <Toggle :on="settings.notifyClaudeReset" @toggle="toggleSetting('notifyClaudeReset')" />
+        </label>
+      </div>
+      <div class="cap-hint">
+        auto-switch only moves to an account whose usage is known and under NOTIFY · open
+        sessions keep their account
       </div>
     </div>
 
@@ -476,6 +528,22 @@ const openrouter = computed(() => providers.byId("openrouter"));
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.switch-hint {
+  margin: 4px 0 12px;
+}
+
+.switch-rows {
+  display: flex;
+  gap: 28px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-family: var(--lb-mono);
+  font-size: 10px;
+  color: var(--lb-muted);
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
 }
 
 .global-hint {

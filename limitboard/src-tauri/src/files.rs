@@ -1,15 +1,15 @@
 //! Read-only, whitelist-scoped credential file access. The webview can only
 //! request these two fixed ids — never arbitrary paths. Contents are returned
 //! to the adapter for the duration of a poll and are never logged or written.
+//! "claude-credentials" is the active Claude Code account's login (see
+//! accounts.rs), so the Claude card follows account switches.
 
 fn resolve(id: &str) -> Option<std::path::PathBuf> {
-    let home = std::env::var("USERPROFILE").ok()?;
-    let rel = match id {
-        "claude-credentials" => ".claude\\.credentials.json",
-        "codex-auth" => ".codex\\auth.json",
-        _ => return None,
-    };
-    Some(std::path::Path::new(&home).join(rel))
+    match id {
+        "claude-credentials" => crate::accounts::credentials_path(None).ok(),
+        "codex-auth" => Some(crate::accounts::home().join(".codex").join("auth.json")),
+        _ => None,
+    }
 }
 
 #[tauri::command]

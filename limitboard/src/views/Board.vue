@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import type { ProviderId } from "../adapters/types";
+import { useAccountsStore } from "../stores/accounts";
 import { useProvidersStore } from "../stores/providers";
 import { useUsageStore } from "../stores/usage";
 import { loadWidgetSize, WIDGET_DEFAULT } from "../stores/widgetSize";
@@ -9,6 +10,13 @@ import ProviderCard from "../components/ProviderCard.vue";
 
 const providers = useProvidersStore();
 const usage = useUsageStore();
+const accounts = useAccountsStore();
+
+// With more than one Claude Code account, the Claude card names the one in use.
+const planFor = (id: ProviderId, plan: string) =>
+  id === "claude-code" && accounts.code.length > 1 && accounts.activeCode
+    ? `${plan} · account ${accounts.activeCode.name}`
+    : plan;
 
 // 1s ticker so staleness ages and countdowns feel live.
 const now = ref(Date.now());
@@ -23,6 +31,7 @@ const cards = computed(() =>
     const snap = usage.snapshots[p.id];
     return {
       ...p,
+      plan: planFor(p.id, p.plan),
       windows: snap?.windows ?? [],
       stat: snap?.stat,
       error: snap?.error,
