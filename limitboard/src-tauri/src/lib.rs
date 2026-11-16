@@ -1,17 +1,19 @@
+mod accounts;
+mod claude_desktop;
 mod files;
 mod probes;
 mod secrets;
 mod tray;
 mod usage;
 mod widgets;
+mod winenv;
 
 use tauri::{
-    menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager,
 };
 
-fn show_main(app: &AppHandle) {
+pub(crate) fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -28,10 +30,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let show = MenuItem::with_id(app, "show", "Show board", true, None::<&str>)?;
-            let rescan = MenuItem::with_id(app, "rescan", "Rescan", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &rescan, &quit])?;
+            let menu = tray::build_menu(app.handle())?;
 
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -44,7 +43,11 @@ pub fn run() {
                         let _ = app.emit("rescan", ());
                     }
                     "quit" => app.exit(0),
-                    _ => {}
+                    id => {
+                        if let Some(acct) = id.strip_prefix("acct:") {
+                            accounts::tray_select(app, acct);
+                        }
+                    }
                 })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
@@ -78,6 +81,15 @@ pub fn run() {
             secrets::get_env_var,
             files::read_credential_file,
             usage::fetch_claude_usage,
+            accounts::claude_accounts,
+            accounts::claude_account_switch,
+            accounts::claude_account_add,
+            accounts::claude_account_rename,
+            accounts::claude_account_remove,
+            accounts::claude_account_sign_in,
+            accounts::claude_account_terminal,
+            accounts::claude_account_open_folder,
+            accounts::claude_account_dismiss_notice,
             tray::set_tray_status,
             widgets::open_widget,
             widgets::show_drag_ghost,

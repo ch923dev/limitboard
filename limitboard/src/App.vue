@@ -2,31 +2,66 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import Board from "./views/Board.vue";
 import Settings from "./views/Settings.vue";
 import Demo from "./views/Demo.vue";
+import Accounts from "./views/Accounts.vue";
 import { buildAdapters } from "./adapters";
 import { windowPct, type ProviderId } from "./adapters/types";
 import { AlertController } from "./alerts/controller";
 import { statusColor } from "./theme";
+import { useAccountsStore } from "./stores/accounts";
 import { useProvidersStore } from "./stores/providers";
 import { useSettingsStore } from "./stores/settings";
 import { useUsageStore } from "./stores/usage";
 
-type View = "board" | "settings" | "demo";
+type View = "board" | "accounts" | "settings" | "demo";
 const view = ref<View>("board");
 const views: View[] = import.meta.env.DEV
-  ? ["board", "settings", "demo"]
-  : ["board", "settings"];
+  ? ["board", "accounts", "settings", "demo"]
+  : ["board", "accounts", "settings"];
 
 const providers = useProvidersStore();
 const settings = useSettingsStore();
 const usage = useUsageStore();
+const accounts = useAccountsStore();
+
+const claudeMonitored = () => providers.enabledProviders.some((p) => p.id === "claude-code");
 
 const adapters = buildAdapters(async () => settings.openrouterSoftCapUsd);
 const alertController = new AlertController(
   (id) => settings.notifyPctFor(id as ProviderId),
   () => settings.isMuted(),
+  () =>
+    claudeMonitored()
+      ? {
+          candidates: accounts.candidates(),
+          notifyPct: settings.notifyPctFor("claude-code"),
+          switchPct: settings.switchPct,
+          notifyReset: settings.notifyClaudeReset,
+          autoSwitch: settings.autoSwitchClaude,
+          onAutoSwitch: (s) =>
+            void accounts.switchTo(s.id).then(() =>
+              sendNotification({
+                title: `Switched Claude Code to ${s.name}`,
+                body: "New terminals use it. Restart the Claude Code sessions you have open.",
+              }),
+            ),
+        }
+      : null,
+);
+
+// The Claude card follows the active account: when it changes, show that
+// account's last-known numbers (never the previous account's) and poll now.
+watch(
+  () => accounts.activeCode?.id,
+  (id, prev) => {
+    if (!id || !prev || id === prev) return;
+    usage.setSnapshot("claude-code", accounts.snapshots[id]);
+    const claude = adapters.get("claude-code");
+    if (claude && claudeMonitored()) void usage.forcePoll(claude);
+  },
 );
 
 const enabledAdapters = () =>
@@ -38,6 +73,7 @@ const clock = ref(new Date());
 const now = ref(Date.now());
 let clockTimer: ReturnType<typeof setInterval> | undefined;
 let unlistenRescan: UnlistenFn | undefined;
+const unlistenAccounts: UnlistenFn[] = [];
 
 const win = getCurrentWindow();
 const minimize = () => void win.minimize();
@@ -59,11 +95,23 @@ onMounted(async () => {
 
   // Tray menu → Rescan (T3 wiring).
   unlistenRescan = await listen("rescan", () => void providers.rescan());
+
+  // Claude accounts: Rust owns the list and switching (tray or window).
+  await accounts.refresh().catch(() => undefined);
+  unlistenAccounts.push(
+    await listen("claude-accounts-changed", () => void accounts.refresh()),
+    await listen<string>("claude-accounts-toast", (e) => (accounts.message = e.payload)),
+    await listen<string>("confirm-desktop-switch", (e) => {
+      view.value = "accounts";
+      accounts.confirmDesktopId = e.payload;
+    }),
+  );
 });
 
 onUnmounted(() => {
   clearInterval(clockTimer);
   unlistenRescan?.();
+  unlistenAccounts.forEach((u) => u());
   usage.stopPolling();
 });
 
@@ -79,6 +127,10 @@ watch(
 watch(
   () => usage.lastPollAt,
   () => {
+    if (claudeMonitored()) {
+      accounts.recordActive(usage.snapshots["claude-code"]);
+      void accounts.pollInactive(usage.intervalMs);
+    }
     const snaps = providers.enabledProviders.flatMap((p) => {
       const snap = usage.snapshots[p.id];
       return snap ? [{ snap, providerName: p.name }] : [];
@@ -150,6 +202,7 @@ const clockText = computed(() =>
 
     <main class="body">
       <Board v-if="view === 'board'" />
+      <Accounts v-else-if="view === 'accounts'" />
       <Demo v-else-if="view === 'demo'" />
       <Settings v-else />
     </main>

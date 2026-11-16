@@ -237,5 +237,45 @@ export const useUsageStore = defineStore("usage", {
       this._timer = undefined;
       this.polling = false;
     },
+
+    /**
+     * Replace a provider's snapshot outright (Claude account switch: the card
+     * must show the new account's last-known data, never the old account's).
+     */
+    setSnapshot(id: ProviderId, snap: StoredSnapshot | undefined) {
+      if (snap) {
+        this.snapshots[id] = { ...snap, providerId: id };
+        saveSnapshot(this.snapshots[id]!);
+      } else {
+        delete this.snapshots[id];
+        try {
+          const map = loadSnapshots();
+          delete map[id];
+          localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(map));
+        } catch {
+          // storage unavailable
+        }
+      }
+    },
+
+    /** Poll one provider now, ignoring cooldown and the cross-window dedupe. */
+    async forcePoll(adapter: ProviderAdapter) {
+      this._nextAllowedAt[adapter.id] = 0;
+      this._errorStreak[adapter.id] = 0;
+      const attempts = loadAttempts();
+      attempts[adapter.id] = Date.now();
+      saveAttempts(attempts);
+      try {
+        this.reduce(await adapter.fetchUsage());
+      } catch (e) {
+        this.reduce({
+          providerId: adapter.id,
+          windows: [],
+          fetchedAt: Date.now(),
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+      this.lastPollAt = Date.now();
+    },
   },
 });

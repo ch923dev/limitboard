@@ -17,6 +17,12 @@ export interface PersistedSettings {
   muteUntil?: MuteUntil;
   /** Per-provider notify threshold; absent ⇒ inherit global notifyPct. */
   notifyPctByProvider?: Partial<Record<ProviderId, number>>;
+  /** Claude account switching: "time to switch" threshold (above notify). */
+  switchPct: number;
+  /** At switchPct, point new terminals at the account with most room left. */
+  autoSwitchClaude: boolean;
+  /** Toast when a Claude account that hit switchPct is available again. */
+  notifyClaudeReset: boolean;
 }
 
 export const isMutedAt = (
@@ -33,6 +39,9 @@ const DEFAULTS: PersistedSettings = {
   autostart: false,
   muteUntil: undefined,
   notifyPctByProvider: {},
+  switchPct: 95,
+  autoSwitchClaude: false,
+  notifyClaudeReset: true,
 };
 
 export const useSettingsStore = defineStore("settings", {
@@ -66,6 +75,9 @@ export const useSettingsStore = defineStore("settings", {
         openrouterSoftCapUsd: this.openrouterSoftCapUsd,
         muteUntil: this.muteUntil,
         notifyPctByProvider: { ...this.notifyPctByProvider },
+        switchPct: this.switchPct,
+        autoSwitchClaude: this.autoSwitchClaude,
+        notifyClaudeReset: this.notifyClaudeReset,
       };
       await store.set("settings", data);
       await store.save();
